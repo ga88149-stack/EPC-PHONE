@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#09121b">
+<title>EPC 現場前台</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#08111a;color:#edf3f8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif}
+header{position:sticky;top:0;z-index:10;background:#0c1722;border-bottom:1px solid #263747;padding:12px 14px}
+.brand{font-weight:900;font-size:20px}.sub{font-size:12px;color:#92a4b5;margin-top:3px}.status{font-size:12px;margin-top:7px;color:#9dd6b4}
+nav{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}button{border:1px solid #34495c;background:#162433;color:#edf3f8;border-radius:10px;padding:11px 12px;font-weight:800;font-size:14px}
+button.primary{background:#d9ae45;color:#111;border-color:#d9ae45}button.danger{background:#3b1b20;border-color:#71303a;color:#ffb9c1}button:disabled{opacity:.45}
+main{padding:12px;max-width:760px;margin:auto}.page{display:none}.page.active{display:block}.card{background:#101c28;border:1px solid #263747;border-radius:14px;padding:13px;margin-bottom:11px}
+h2,h3{margin:0 0 10px}input,select{width:100%;background:#09131d;border:1px solid #34495c;color:#fff;border-radius:9px;padding:11px;font-size:16px}
+label{font-size:12px;color:#9fb0c0;font-weight:800;display:block;margin-bottom:5px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:9px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+.member,.player{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid #223140}.member:last-child,.player:last-child{border-bottom:0}
+.name{font-weight:900;font-size:17px}.meta{font-size:12px;color:#9fb0c0;margin-top:3px}.num{font-variant-numeric:tabular-nums}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:11px}.kpi{background:#101c28;border:1px solid #263747;border-radius:12px;padding:11px}.kpi .l{font-size:11px;color:#91a4b5}.kpi .v{font-size:19px;font-weight:900;margin-top:4px}
+.diff.pos{color:#68d391}.diff.neg{color:#ff7c88}.diff.zero{color:#e9eef3}
+.stackrow{display:grid;grid-template-columns:1fr 132px;gap:8px;align-items:end;margin-top:9px}.stackrow button{grid-column:2}.warn{background:#34261a;border:1px solid #76532a;color:#ffd79b;padding:10px;border-radius:10px;font-size:12px;margin-bottom:10px}
+.empty{text-align:center;color:#91a4b5;padding:25px 8px}.small{font-size:11px;color:#91a4b5}
+</style>
+</head>
+<body>
+<header>
+ <div class="brand">EPC 現場前台</div>
+ <div class="sub">手機操作｜會員管理・下桌籌碼</div>
+ <div id="status" class="status">正在連接雲端…</div>
+ <nav><button id="tabEvent" class="primary" onclick="showPage('event')">進行中賽事</button><button id="tabMember" onclick="showPage('member')">會員</button></nav>
+</header>
+<main>
+<section id="event" class="page active">
+ <div class="card">
+  <label>選擇進行中賽事</label>
+  <select id="eventSelect" onchange="renderEvent()"></select>
+  <div class="toolbar"><button onclick="loadCloud()">重新同步</button></div>
+ </div>
+ <div id="eventSummary"></div>
+ <div id="players"></div>
+</section>
+<section id="member" class="page">
+ <div class="card">
+  <h3>新增會員</h3>
+  <div class="grid2">
+   <div><label>姓名</label><input id="newName" autocomplete="off"></div>
+   <div><label>會員編號</label><input id="newId" placeholder="留白自動產生" autocomplete="off"></div>
+  </div>
+  <div class="toolbar"><button class="primary" onclick="addMember()">新增會員</button></div>
+ </div>
+ <div class="card">
+  <label>搜尋會員</label><input id="memberSearch" type="search" placeholder="姓名或會員編號" oninput="renderMembers()">
+ </div>
+ <div id="members"></div>
+</section>
+</main>
+<script>
+const CLOUD_API='https://script.google.com/macros/s/AKfycby1YCXllpyYOFEN60N-jR6kAk-Y2hOYpIa2GlS74cBFDK-Dt4mDa4sCd80MR6ZSxpbQ6A/exec';
+const $=id=>document.getElementById(id);
+const n=v=>Number(v||0);
+const fmt=v=>Math.round(n(v)).toLocaleString('zh-TW');
+const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const uid=()=>String(Date.now()).slice(-8)+Math.floor(Math.random()*90+10);
+let db={members:[],events:[]},members=[],revision=0,writeId='',loading=false;
+
+function status(t,bad=false){$('status').textContent=t;$('status').style.color=bad?'#ff8b96':'#9dd6b4'}
+async function getLoad(){
+ const r=await fetch(CLOUD_API+'?action=load&_='+Date.now(),{cache:'no-store',redirect:'follow'});
+ if(!r.ok)throw new Error('HTTP '+r.status);
+ const j=await r.json();if(!j.ok)throw new Error(j.error||'LOAD_FAILED');return j;
+}
+async function post(payload){
+ const r=await fetch(CLOUD_API,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload),cache:'no-store',redirect:'follow'});
+ if(!r.ok)throw new Error('HTTP '+r.status);
+ const j=await r.json();if(!j.ok)throw new Error(j.error||'POST_FAILED');return j;
+}
+function mergeMembers(base,forms){
+ const map=new Map((base||[]).map(m=>[String(m.id||''),m]));
+ (forms||[]).forEach(f=>{const id=String(f.id||'');if(!id)return;map.set(id,{...(map.get(id)||{}),...f})});
+ return [...map.values()];
+}
+async function loadCloud(){
+ if(loading)return;loading=true;status('正在同步雲端…');
+ try{
+  const r=await getLoad();db=(r.data&&typeof r.data==='object')?r.data:{members:[],events:[]};
+  db.members=Array.isArray(db.members)?db.members:[];db.events=Array.isArray(db.events)?db.events:[];
+  members=mergeMembers(db.members,r.members);revision=n(r.revision);writeId=String(r.writeId||'');
+  renderAll();status('雲端已同步｜Revision '+revision);
+ }catch(e){status('雲端連線失敗｜沒有覆蓋目前畫面',true);alert('雲端連線失敗：'+(e.message||e))}
+ finally{loading=false}
+}
+function showPage(id){
+ document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===id));
+ $('tabEvent').classList.toggle('primary',id==='event');$('tabMember').classList.toggle('primary',id==='member');
+}
+function activeEvents(){return db.events.filter(e=>(e.status||'進行中')!=='已結算')}
+function renderAll(){
+ const sel=$('eventSelect'),old=sel.value,events=activeEvents();
+ sel.innerHTML=events.map(e=>`<option value="${esc(e.id)}">${esc(e.date)}｜第 ${e.seq||1} 場｜${fmt(e.level)}</option>`).join('');
+ if(events.some(e=>String(e.id)===old))sel.value=old;
+ renderEvent();renderMembers();
+}
+function memberOf(id){return members.find(m=>String(m.id)===String(id))||db.members.find(m=>String(m.id)===String(id))||{}}
+function eventOf(){return activeEvents().find(e=>String(e.id)===String($('eventSelect').value))}
+function groupsOf(p){return n(p.buyin)+n(p.rebuy)+n(p.addon)}
+function renderEvent(){
+ const e=eventOf();
+ if(!e){$('eventSummary').innerHTML='';$('players').innerHTML='<div class="empty">目前沒有進行中的賽事</div>';return}
+ const ps=e.players||[],start=n(e.chips),groups=ps.reduce((a,p)=>a+groupsOf(p),0),expected=groups*start;
+ const entered=ps.filter(p=>String(p.stack??'').trim()!==''&&Number.isFinite(Number(p.stack)));
+ const actual=entered.reduce((a,p)=>a+n(p.stack),0);
+ const allEntered=entered.length===ps.length&&ps.length>0;
+ const diff=allEntered?actual-expected:null;
+ $('eventSummary').innerHTML=`<div class="kpis">
+  <div class="kpi"><div class="l">總買入組數</div><div class="v">${fmt(groups)} 組</div></div>
+  <div class="kpi"><div class="l">理論總籌碼</div><div class="v num">${fmt(expected)}</div></div>
+  <div class="kpi"><div class="l">已輸入玩家</div><div class="v">${entered.length} / ${ps.length}</div></div>
+  <div class="kpi"><div class="l">全場籌碼差額</div><div class="v diff ${diff===null?'zero':diff>0?'pos':diff<0?'neg':'zero'}">${diff===null?'尚未完成':(diff>0?'+':'')+fmt(diff)}</div></div>
+ </div>${!allEntered?'<div class="warn">所有玩家的下桌籌碼都輸入後，才會顯示最終全場籌碼差額。</div>':''}`;
+ $('players').innerHTML=ps.map(p=>{
+  const m=memberOf(p.memberId),g=groupsOf(p),expectedP=g*start;
+  const has=String(p.stack??'').trim()!==''&&Number.isFinite(Number(p.stack)),d=has?n(p.stack)-expectedP:null;
+  return `<div class="card player">
+   <div style="grid-column:1/-1">
+    <div class="name">${esc(m.name||'未知玩家')}</div>
+    <div class="meta">會員編號 ${esc(m.id||p.memberId||'-')}｜${g} 組｜原始籌碼 ${fmt(expectedP)}</div>
+    <div class="stackrow">
+     <div><label>下桌籌碼</label><input id="stack_${esc(p.memberId)}" type="number" inputmode="numeric" min="0" step="1" value="${has?esc(p.stack):''}" oninput="previewDiff('${esc(p.memberId)}',${expectedP})"></div>
+     <button class="primary" onclick="saveStack('${esc(e.id)}','${esc(p.memberId)}')">儲存</button>
+    </div>
+    <div id="diff_${esc(p.memberId)}" class="meta diff ${d===null?'zero':d>0?'pos':d<0?'neg':'zero'}">籌碼差額：${d===null?'尚未輸入':(d>0?'+':'')+fmt(d)}</div>
+   </div>
+  </div>`
+ }).join('');
+}
+function previewDiff(memberId,expected){
+ const el=$('stack_'+memberId),dEl=$('diff_'+memberId);if(!el||!dEl)return;
+ if(el.value===''){dEl.textContent='籌碼差額：尚未輸入';dEl.className='meta diff zero';return}
+ const d=n(el.value)-expected;dEl.textContent='籌碼差額：'+(d>0?'+':'')+fmt(d);dEl.className='meta diff '+(d>0?'pos':d<0?'neg':'zero');
+}
+function makeWriteId(){return 'EPC-FRONT-'+Date.now()+'-'+Math.random().toString(36).slice(2,9)}
+async function saveStack(eventId,memberId){
+ const input=$('stack_'+memberId);if(!input||input.value==='')return alert('請輸入下桌籌碼');
+ const stack=Math.max(0,Math.round(n(input.value)));
+ status('正在儲存下桌籌碼…');
+ // 每次只把這一筆變更套用到「剛從雲端抓到的最新 DB」；
+ // 若 Revision 衝突，不強制覆蓋，而是重新抓最新版本後再套用同一筆 stack。
+ for(let attempt=0;attempt<3;attempt++){
+  try{
+   const latest=await getLoad(),fresh=latest.data;
+   if(!fresh||typeof fresh!=='object')throw new Error('CLOUD_EMPTY');
+   const e=(fresh.events||[]).find(x=>String(x.id)===String(eventId));if(!e)throw new Error('EVENT_NOT_FOUND');
+   if((e.status||'進行中')==='已結算')throw new Error('EVENT_ALREADY_SETTLED');
+   const p=(e.players||[]).find(x=>String(x.memberId)===String(memberId));if(!p)throw new Error('PLAYER_NOT_FOUND');
+   p.stack=stack;
+   const wid=makeWriteId();
+   const saved=await post({action:'save',data:fresh,revision:n(latest.revision),writeId:wid,force:false});
+   const verify=await getLoad();
+   if(n(verify.revision)!==n(saved.revision)||String(verify.writeId||'')!==wid)throw new Error('CLOUD_VERIFY_FAILED');
+   db=verify.data;members=mergeMembers(db.members,verify.members);revision=n(verify.revision);writeId=wid;
+   renderAll();status('下桌籌碼已儲存｜Revision '+revision);return;
+  }catch(e){
+   if(String(e.message||e).includes('CLOUD_CONFLICT')&&attempt<2)continue;
+   status('儲存失敗｜未強制覆蓋雲端',true);alert('下桌籌碼儲存失敗：'+(e.message||e));return;
+  }
+ }
+}
+function renderMembers(){
+ const q=String($('memberSearch').value||'').trim().toLowerCase();
+ const list=members.filter(m=>!q||String(m.name||'').toLowerCase().includes(q)||String(m.id||'').toLowerCase().includes(q));
+ $('members').innerHTML=list.map(m=>`<div class="card member"><div><div class="name">${esc(m.name||'-')}</div><div class="meta">會員編號 ${esc(m.id||'-')}</div></div><button class="danger" onclick="deleteMember('${esc(m.id)}')">刪除</button></div>`).join('')||'<div class="empty">沒有符合的會員</div>';
+}
+async function addMember(){
+ const name=$('newName').value.trim(),id=String($('newId').value.trim()||uid());if(!name)return alert('請輸入姓名');
+ if(members.some(m=>String(m.id)===id))return alert('會員編號已存在');
+ try{
+  status('正在新增會員…');await post({action:'addMember',member:{id,name}});
+  $('newName').value='';$('newId').value='';await loadCloud();showPage('member');status('會員已新增');
+ }catch(e){status('新增會員失敗',true);alert('新增會員失敗：'+(e.message||e))}
+}
+async function deleteMember(id){
+ const m=memberOf(id),used=(db.events||[]).some(e=>(e.players||[]).some(p=>String(p.memberId)===String(id)));
+ if(used)return alert('此會員已有賽事紀錄，不能刪除，以免破壞歷史帳務。');
+ if(!confirm(`確定刪除會員「${m.name||id}」？`))return;
+ try{
+  status('正在刪除會員…');await post({action:'deleteMember',memberId:String(id)});await loadCloud();showPage('member');status('會員已刪除');
+ }catch(e){status('刪除會員失敗',true);alert('刪除會員失敗：'+(e.message||e))}
+}
+loadCloud();
+</script>
+</body></html>
