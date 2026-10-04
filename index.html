@@ -116,16 +116,14 @@ async function loadCloud(){
   let fb=null,fbError='';
   try{fb=await getFirebaseSnapshot()}catch(e){fbError=String(e&&e.message||e)}
   const r=await getLoad();
-  const source=(fb&&fb.data&&typeof fb.data==='object')?fb.data:((r.data&&typeof r.data==='object')?r.data:{members:[],events:[]});
+  // Safety rollback: Firebase mirror currently contains stale/deleted roster entries.
+  // Until Management publishes authoritative deletions, never use it as the phone roster source.
+  const source=(r.data&&typeof r.data==='object')?r.data:{members:[],events:[]};
   db=source;
   db.members=Array.isArray(db.members)?db.members:[];db.events=Array.isArray(db.events)?db.events:[];
   members=mergeMembers(db.members,r.members);revision=n(r.revision);writeId=String(r.writeId||'');
   renderAll();
-  if(fb){
-   const ae=(db.events||[]).filter(e=>(e.status||'進行中')!=='已結算');
-   const maxPlayers=ae.reduce((m,e)=>Math.max(m,Array.isArray(e.players)?e.players.length:0),0);
-   status('Firebase 完整快照已同步｜進行中 '+ae.length+' 場｜最多 '+maxPlayers+' 人');
-  }else status('Apps Script fallback｜Revision '+revision+'｜Firebase '+fbError,true);
+  status('安全模式｜Apps Script 名單｜Revision '+revision+(fbError?'｜Firebase 暫停：'+fbError:''));
  }catch(e){status('雲端連線失敗｜沒有覆蓋目前畫面',true);alert('雲端連線失敗：'+(e.message||e))}
  finally{loading=false}
 }
