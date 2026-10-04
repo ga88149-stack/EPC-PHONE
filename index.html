@@ -222,6 +222,7 @@ async function deleteMember(id){
   status('正在刪除會員…');await post({action:'deleteMember',memberId:String(id)});await loadCloud();showPage('member');status('會員已刪除');
  }catch(e){status('刪除會員失敗',true);alert('刪除會員失敗：'+(e.message||e))}
 }
+Object.assign(window,{loadCloud,showPage,renderEvent,renderMembers,previewDiff,saveStack,addMember,deleteMember});
 loadCloud();
 </script>
 </body></html>
