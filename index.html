@@ -105,7 +105,7 @@ async function getFirebaseSnapshot(){
   if(!snaps[i].exists())throw new Error('FIREBASE_CHUNK_MISSING');
   const x=snaps[i].data()||{};if(Number(x.index)!==i||typeof x.value!=='string')throw new Error('FIREBASE_CHUNK_INVALID');txt+=x.value;
  }
- const data=JSON.parse(txt);await overlayFirebaseFields_(data);return {data,generation};
+ const data=JSON.parse(txt);let overlayOk=true,overlayError='';try{await overlayFirebaseFields_(data)}catch(e){overlayOk=false;overlayError=String(e&&e.message||e)}return {data,generation,overlayOk,overlayError};
 }
 onAuthStateChanged(firebaseAuth,u=>{
  firebaseUser=u&&String(u.email||'').toLowerCase()==='ga88149@gmail.com'?u:null;
@@ -138,15 +138,19 @@ function mergeMembers(base,forms){
 async function loadCloud(){
  if(loading)return;loading=true;status('正在同步最新賽事…');
  try{
-  let fb=null;
-  try{fb=await getFirebaseSnapshot()}catch(_){}
+  let fb=null,fbError='';
+  try{fb=await getFirebaseSnapshot()}catch(e){fbError=String(e&&e.message||e)}
   const r=await getLoad();
   const source=(fb&&fb.data&&typeof fb.data==='object')?fb.data:((r.data&&typeof r.data==='object')?r.data:{members:[],events:[]});
   db=source;
   db.members=Array.isArray(db.members)?db.members:[];db.events=Array.isArray(db.events)?db.events:[];
   members=mergeMembers(db.members,r.members);revision=n(r.revision);writeId=String(r.writeId||'');
   renderAll();
-  status(fb?'Firebase 最新賽事已同步｜玩家名單即時':'Apps Script 雲端已同步｜Revision '+revision);
+  if(fb){
+   const ae=(db.events||[]).filter(e=>(e.status||'進行中')!=='已結算');
+   const maxPlayers=ae.reduce((m,e)=>Math.max(m,Array.isArray(e.players)?e.players.length:0),0);
+   status('Firebase 已同步｜進行中 '+ae.length+' 場｜最多 '+maxPlayers+' 人'+(fb.overlayOk?'｜欄位 ✓':'｜欄位失敗 '+fb.overlayError),!fb.overlayOk);
+  }else status('Apps Script fallback｜Revision '+revision+'｜Firebase '+fbError,true);
  }catch(e){status('雲端連線失敗｜沒有覆蓋目前畫面',true);alert('雲端連線失敗：'+(e.message||e))}
  finally{loading=false}
 }
