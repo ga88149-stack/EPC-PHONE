@@ -57,7 +57,7 @@ label{font-size:12px;color:#9fb0c0;font-weight:800;display:block;margin-bottom:5
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 import {getAuth,GoogleAuthProvider,signInWithPopup,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
-import {getFirestore,doc,getDoc} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+import {getFirestore,doc,getDoc,collection,getDocs,query,orderBy,limit} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 const firebaseApp=initializeApp({apiKey:"AIzaSyAt98g3mzH_vMifrIq-xvf8hMQwUyUmGiQ",authDomain:"epcmenagement.firebaseapp.com",projectId:"epcmenagement",storageBucket:"epcmenagement.firebasestorage.app",messagingSenderId:"257676873693",appId:"1:257676873693:web:f4edfe9199cc60e8d93034"});
 const firebaseAuth=getAuth(firebaseApp),firebaseFs=getFirestore(firebaseApp),firebaseProvider=new GoogleAuthProvider();
 firebaseProvider.setCustomParameters({prompt:"select_account"});
@@ -66,6 +66,31 @@ async function firebaseLogin(){
  try{await signInWithPopup(firebaseAuth,firebaseProvider)}catch(e){status('Firebase 登入失敗｜'+(e.message||e),true)}
 }
 window.firebaseLogin=firebaseLogin;
+function applyFirebasePath_(root,path,value){
+ const parts=[];String(path||'').replace(/([^.[\]]+)|\[([^\]]+)\]/g,(_,a,b)=>{parts.push(a!==undefined?a:b)});
+ let cur=root;
+ for(let i=0;i<parts.length-1;i++){
+  const k=parts[i],parent=String(parts[i-1]||'');
+  if(Array.isArray(cur)){
+   let idx=cur.findIndex((x,j)=>String(x&&typeof x==='object'?(x.id??x.memberId??x.eventId??('idx:'+j)):('idx:'+j))===String(k));
+   if(idx<0){const rec={};if(parent==='players')rec.memberId=k;else rec.id=k;cur.push(rec);idx=cur.length-1}cur=cur[idx];
+  }else{if(cur[k]==null)cur[k]={};cur=cur[k]}
+ }
+ if(!parts.length)return;
+ const last=parts[parts.length-1],parent=String(parts[parts.length-2]||'');
+ if(Array.isArray(cur)){
+  let idx=cur.findIndex((x,j)=>String(x&&typeof x==='object'?(x.id??x.memberId??x.eventId??('idx:'+j)):('idx:'+j))===String(last));
+  if(idx<0){const rec=(value&&typeof value==='object'&&!Array.isArray(value))?structuredClone(value):{};if(parent==='players'&&rec.memberId==null)rec.memberId=last;else if(rec.id==null)rec.id=last;cur.push(rec)}
+  else cur[idx]=structuredClone(value);
+ }else cur[last]=structuredClone(value);
+}
+async function overlayFirebaseFields_(data){
+ const q=query(collection(firebaseFs,'epcFieldVersionsV2'),orderBy('updatedAt','desc'),limit(500));
+ const snap=await getDocs(q),docs=[];snap.forEach(s=>docs.push(s.data()||{}));
+ docs.reverse();
+ for(const d of docs){const path=String(d.path||'');if(path&&!path.startsWith('__syncCanary.'))applyFirebasePath_(data,path,d.value)}
+ return data;
+}
 async function getFirebaseSnapshot(){
  const u=firebaseAuth.currentUser;
  if(!u||String(u.email||'').toLowerCase()!=='ga88149@gmail.com')throw new Error('FIREBASE_NOT_AUTHORIZED');
@@ -80,7 +105,7 @@ async function getFirebaseSnapshot(){
   if(!snaps[i].exists())throw new Error('FIREBASE_CHUNK_MISSING');
   const x=snaps[i].data()||{};if(Number(x.index)!==i||typeof x.value!=='string')throw new Error('FIREBASE_CHUNK_INVALID');txt+=x.value;
  }
- return {data:JSON.parse(txt),generation};
+ const data=JSON.parse(txt);await overlayFirebaseFields_(data);return {data,generation};
 }
 onAuthStateChanged(firebaseAuth,u=>{
  firebaseUser=u&&String(u.email||'').toLowerCase()==='ga88149@gmail.com'?u:null;
