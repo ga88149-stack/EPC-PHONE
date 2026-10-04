@@ -34,7 +34,7 @@ label{font-size:12px;color:#9fb0c0;font-weight:800;display:block;margin-bottom:5
  <div class="card">
   <label>選擇進行中賽事</label>
   <select id="eventSelect" onchange="renderEvent()"></select>
-  <div class="toolbar"><button onclick="loadCloud()">重新同步</button></div>
+  <div class="toolbar"><button onclick="loadCloud()">重新同步</button><button id="firebaseLoginBtn" onclick="firebaseLogin()">Firebase 登入</button></div>
  </div>
  <div id="eventSummary"></div>
  <div id="players"></div>
@@ -54,7 +54,38 @@ label{font-size:12px;color:#9fb0c0;font-weight:800;display:block;margin-bottom:5
  <div id="members"></div>
 </section>
 </main>
-<script>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+import {getAuth,GoogleAuthProvider,signInWithPopup,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
+import {getFirestore,doc,getDoc} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+const firebaseApp=initializeApp({apiKey:"AIzaSyAt98g3mzH_vMifrIq-xvf8hMQwUyUmGiQ",authDomain:"epcmenagement.firebaseapp.com",projectId:"epcmenagement",storageBucket:"epcmenagement.firebasestorage.app",messagingSenderId:"257676873693",appId:"1:257676873693:web:f4edfe9199cc60e8d93034"});
+const firebaseAuth=getAuth(firebaseApp),firebaseFs=getFirestore(firebaseApp),firebaseProvider=new GoogleAuthProvider();
+firebaseProvider.setCustomParameters({prompt:"select_account"});
+let firebaseUser=null;
+async function firebaseLogin(){
+ try{await signInWithPopup(firebaseAuth,firebaseProvider)}catch(e){status('Firebase 登入失敗｜'+(e.message||e),true)}
+}
+window.firebaseLogin=firebaseLogin;
+async function getFirebaseSnapshot(){
+ const u=firebaseAuth.currentUser;
+ if(!u||String(u.email||'').toLowerCase()!=='ga88149@gmail.com')throw new Error('FIREBASE_NOT_AUTHORIZED');
+ const metaSnap=await getDoc(doc(firebaseFs,'epcMirrorMeta','current'));
+ if(!metaSnap.exists())throw new Error('FIREBASE_META_MISSING');
+ const meta=metaSnap.data()||{},generation=String(meta.generation||''),count=Number(meta.snapshotChunks||0);
+ if(!generation||!Number.isInteger(count)||count<1||count>100)throw new Error('FIREBASE_META_INVALID');
+ const reads=[];
+ for(let i=0;i<count;i++)reads.push(getDoc(doc(firebaseFs,'epcMirrorSnapshots',generation,'chunks','chunk_'+String(i).padStart(3,'0'))));
+ const snaps=await Promise.all(reads);let txt='';
+ for(let i=0;i<snaps.length;i++){
+  if(!snaps[i].exists())throw new Error('FIREBASE_CHUNK_MISSING');
+  const x=snaps[i].data()||{};if(Number(x.index)!==i||typeof x.value!=='string')throw new Error('FIREBASE_CHUNK_INVALID');txt+=x.value;
+ }
+ return {data:JSON.parse(txt),generation};
+}
+onAuthStateChanged(firebaseAuth,u=>{
+ firebaseUser=u&&String(u.email||'').toLowerCase()==='ga88149@gmail.com'?u:null;
+ const b=document.getElementById('firebaseLoginBtn');if(b)b.textContent=firebaseUser?'Firebase ✓':'Firebase 登入';
+});
 const CLOUD_API='https://script.google.com/macros/s/AKfycby1YCXllpyYOFEN60N-jR6kAk-Y2hOYpIa2GlS74cBFDK-Dt4mDa4sCd80MR6ZSxpbQ6A/exec';
 const $=id=>document.getElementById(id);
 const n=v=>Number(v||0);
@@ -80,12 +111,17 @@ function mergeMembers(base,forms){
  return [...map.values()];
 }
 async function loadCloud(){
- if(loading)return;loading=true;status('正在同步雲端…');
+ if(loading)return;loading=true;status('正在同步最新賽事…');
  try{
-  const r=await getLoad();db=(r.data&&typeof r.data==='object')?r.data:{members:[],events:[]};
+  let fb=null;
+  try{fb=await getFirebaseSnapshot()}catch(_){}
+  const r=await getLoad();
+  const source=(fb&&fb.data&&typeof fb.data==='object')?fb.data:((r.data&&typeof r.data==='object')?r.data:{members:[],events:[]});
+  db=source;
   db.members=Array.isArray(db.members)?db.members:[];db.events=Array.isArray(db.events)?db.events:[];
   members=mergeMembers(db.members,r.members);revision=n(r.revision);writeId=String(r.writeId||'');
-  renderAll();status('雲端已同步｜Revision '+revision);
+  renderAll();
+  status(fb?'Firebase 最新賽事已同步｜玩家名單即時':'Apps Script 雲端已同步｜Revision '+revision);
  }catch(e){status('雲端連線失敗｜沒有覆蓋目前畫面',true);alert('雲端連線失敗：'+(e.message||e))}
  finally{loading=false}
 }
