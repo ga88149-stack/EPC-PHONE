@@ -116,14 +116,21 @@ async function loadCloud(){
   let fb=null,fbError='';
   try{fb=await getFirebaseSnapshot()}catch(e){fbError=String(e&&e.message||e)}
   const r=await getLoad();
-  // Safety rollback: Firebase mirror currently contains stale/deleted roster entries.
-  // Until Management publishes authoritative deletions, never use it as the phone roster source.
-  const source=(r.data&&typeof r.data==='object')?r.data:{members:[],events:[]};
-  db=source;
+  const base=(r.data&&typeof r.data==='object')?r.data:{members:[],events:[]};
+  let liveRoster=null,rosterError='';
+  if(firebaseAuth.currentUser&&String(firebaseAuth.currentUser.email||'').toLowerCase()==='ga88149@gmail.com'){
+   try{
+    const rs=await getDoc(doc(firebaseFs,'epcLiveRoster','current'));
+    if(rs.exists()&&Array.isArray((rs.data()||{}).events))liveRoster=rs.data();
+    else rosterError='LIVE_ROSTER_MISSING';
+   }catch(e){rosterError=String(e&&e.message||e)}
+  }else rosterError='FIREBASE_NOT_AUTHORIZED';
+  db={...base,events:liveRoster?liveRoster.events:(Array.isArray(base.events)?base.events:[])};
   db.members=Array.isArray(db.members)?db.members:[];db.events=Array.isArray(db.events)?db.events:[];
   members=mergeMembers(db.members,r.members);revision=n(r.revision);writeId=String(r.writeId||'');
   renderAll();
-  status('安全模式｜Apps Script 名單｜Revision '+revision+(fbError?'｜Firebase 暫停：'+fbError:''));
+  const ae=activeEvents(),pc=ae.reduce((m,e)=>Math.max(m,Array.isArray(e.players)?e.players.length:0),0);
+  status(liveRoster?'即時名單 ✓｜進行中 '+ae.length+' 場｜最多 '+pc+' 人':'名單 fallback｜'+rosterError+'｜Revision '+revision,!liveRoster);
  }catch(e){status('雲端連線失敗｜沒有覆蓋目前畫面',true);alert('雲端連線失敗：'+(e.message||e))}
  finally{loading=false}
 }
